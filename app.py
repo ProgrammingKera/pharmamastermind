@@ -59,7 +59,7 @@ def signsup():
     role = data.get("role")  
     password = data.get("password")
 
-    print("📥 Received Signup Data:", data)
+    
 
     # Generate verification code
     verification_code = email_service.generate_verification_code()
@@ -142,6 +142,50 @@ def verify_email():
     except Exception as e:
         print("❌ Verification Error:", str(e))
         return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/resend-verification", methods=["POST"])
+def resend_verification():
+    data = request.get_json()
+    email = data.get("email")
+    
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Check if user exists in pending_users
+        cur.execute("SELECT * FROM pending_users WHERE email = %s", (email,))
+        pending_user = cur.fetchone()
+        
+        if pending_user:
+            # Generate new verification code
+            verification_code = email_service.generate_verification_code()
+            code_expiry = datetime.now() + timedelta(minutes=10)
+            
+            # Update verification code
+            cur.execute("""
+                UPDATE pending_users 
+                SET verification_code = %s, code_expiry = %s 
+                WHERE email = %s
+            """, (verification_code, code_expiry, email))
+            mysql.connection.commit()
+            
+            # Send new verification email
+            user_name = f"{pending_user[2]} {pending_user[3]}"  # first_name last_name
+            if email_service.send_verification_email(email, user_name, verification_code):
+                cur.close()
+                return jsonify({"success": True, "message": "Verification code sent again!"})
+            else:
+                cur.close()
+                return jsonify({"success": False, "message": "Failed to send verification email"}), 500
+        else:
+            cur.close()
+            return jsonify({"success": False, "message": "Email not found in pending registrations"}), 404
+            
+    except Exception as e:
+        print("❌ Resend Verification Error:", str(e))
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
 @app.route("/signsin", methods=["POST"])
 def signsin():
     data = request.get_json()
@@ -174,6 +218,92 @@ def signsin():
             return jsonify({"success": False, "message": "Email not found!"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/forgot-password", methods=["POST"])
+def forgot_password():
+    data = request.get_json()
+    email = data.get("email")
+
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Check if email exists in users table
+        cur.execute("SELECT * FROM users WHERE email = %s", (email,))
+        user = cur.fetchone()
+        if not user:
+            cur.close()
+            return jsonify({"success": False, "message": "Email not registered"}), 404
+
+        # Generate reset code
+        reset_code = email_service.generate_verification_code()
+        code_expiry = datetime.now() + timedelta(minutes=10)
+
+        # Insert/Update password_resets table
+        cur.execute("""
+            INSERT INTO password_resets (email, reset_code, code_expiry)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+            reset_code = VALUES(reset_code),
+            code_expiry = VALUES(code_expiry)
+        """, (email, reset_code, code_expiry))
+        mysql.connection.commit()
+
+        # Send reset email
+        if email_service.send_verification_email(email, user[2] + " " + user[3], reset_code):
+            cur.close()
+            return jsonify({"success": True, "message": "Password reset code sent to email!"}), 200
+        else:
+            cur.close()
+            return jsonify({"success": False, "message": "Failed to send reset email"}), 500
+
+    except Exception as e:
+        print("❌ Forgot Password Error:", str(e))
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+# Verify reset code and update password
+@app.route("/reset-password", methods=["POST"])
+def reset_password():
+    data = request.get_json()
+    email = data.get("email")
+    reset_code = data.get("code")
+    new_password = data.get("newPassword")
+
+    try:
+        cur = mysql.connection.cursor()
+
+        # Check if code is valid
+        cur.execute("""
+            SELECT * FROM password_resets 
+            WHERE email = %s AND reset_code = %s AND code_expiry > NOW()
+        """, (email, reset_code))
+        reset_entry = cur.fetchone()
+
+        if not reset_entry:
+            cur.close()
+            return jsonify({"success": False, "message": "Invalid or expired reset code"}), 400
+
+        # Hash new password
+        hashed_pw = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+        # Update user's password
+        cur.execute("UPDATE users SET password = %s WHERE email = %s", (hashed_pw, email))
+
+        # Remove reset entry
+        cur.execute("DELETE FROM password_resets WHERE email = %s", (email,))
+        
+        mysql.connection.commit()
+        cur.close()
+
+        return jsonify({"success": True, "message": "Password updated successfully!"}), 200
+
+    except Exception as e:
+        print("❌ Reset Password Error:", str(e))
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+
 
 
 @app.route("/whoami")
