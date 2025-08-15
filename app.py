@@ -12,6 +12,7 @@ from fpdf import FPDF
 import os
 import stripe
 import uuid
+from email_service import EmailService
 
 # Import DSS module
 from dss import init_dss_routes
@@ -37,6 +38,9 @@ app.config['MYSQL_HOST'] = 'localhost'
 
 mysql = MySQL(app)
 
+# Initialize email service
+email_service = EmailService()
+
 # Register main routes
 app.register_blueprint(routes)
 
@@ -53,26 +57,91 @@ def signsup():
     first_name = data.get("firstName")
     last_name = data.get("lastName")
     role = data.get("role")  
+    password = data.get("password")
 
     print("📥 Received Signup Data:", data)
 
+    # Generate verification code
+    verification_code = email_service.generate_verification_code()
+    code_expiry = datetime.now() + timedelta(minutes=10)
+    
     hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
     try:
         cur = mysql.connection.cursor()
+        
+        # Check if email already exists
+        cur.execute("SELECT email FROM users WHERE email = %s", (email,))
+        if cur.fetchone():
+            cur.close()
+            return jsonify({"success": False, "message": "Email already exists"}), 400
+        
+        # Store user data temporarily with verification code
         cur.execute("""
-            INSERT INTO users (username, first_name, last_name, email, password, role)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (username, first_name, last_name, email, hashed_pw, role))
+            INSERT INTO pending_users (username, first_name, last_name, email, password, role, verification_code, code_expiry)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE 
+            verification_code = VALUES(verification_code),
+            code_expiry = VALUES(code_expiry),
+            password = VALUES(password)
+        """, (username, first_name, last_name, email, hashed_pw, role, verification_code, code_expiry))
         mysql.connection.commit()
         cur.close()
-        print("✅ Signup saved successfully.")
-        return "Signup successful", 200
+        
+        # Send verification email
+        if email_service.send_verification_email(email, f"{first_name} {last_name}", verification_code):
+            print("✅ Verification email sent successfully.")
+            return jsonify({
+                "success": True, 
+                "message": "Verification email sent! Please check your email to complete registration.",
+                "email": email
+            }), 200
+        else:
+            return jsonify({"success": False, "message": "Failed to send verification email"}), 500
+            
     except Exception as e:
         print("❌ Signup Error:", str(e))
-        return f"An error occurred: {str(e)}", 400
+        return jsonify({"success": False, "message": f"An error occurred: {str(e)}"}), 400
 
 
+@app.route("/verify-email", methods=["POST"])
+def verify_email():
+    data = request.get_json()
+    email = data.get("email")
+    code = data.get("code")
+    
+    try:
+        cur = mysql.connection.cursor()
+        
+        # Check verification code
+        cur.execute("""
+            SELECT * FROM pending_users 
+            WHERE email = %s AND verification_code = %s AND code_expiry > NOW()
+        """, (email, code))
+        
+        pending_user = cur.fetchone()
+        
+        if pending_user:
+            # Move user to main users table
+            cur.execute("""
+                INSERT INTO users (username, first_name, last_name, email, password, role)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (pending_user[1], pending_user[2], pending_user[3], pending_user[4], pending_user[5], pending_user[6]))
+            
+            # Remove from pending users
+            cur.execute("DELETE FROM pending_users WHERE email = %s", (email,))
+            
+            mysql.connection.commit()
+            cur.close()
+            
+            return jsonify({"success": True, "message": "Email verified successfully!"})
+        else:
+            cur.close()
+            return jsonify({"success": False, "message": "Invalid or expired verification code"})
+            
+    except Exception as e:
+        print("❌ Verification Error:", str(e))
+        return jsonify({"success": False, "message": str(e)}), 500
 @app.route("/signsin", methods=["POST"])
 def signsin():
     data = request.get_json()

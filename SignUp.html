@@ -340,26 +340,32 @@
         role: document.getElementById("role").value
       };
 
-      fetch("http://127.0.0.1:5000/signsup", {
+      fetch("/signsup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData)
       })
         .then(response => {
           if (!response.ok) throw new Error("Signup failed");
-          return response.text();
+          return response.json();
         })
         .then(data => {
-          showPopup(data); // Success message
-          setTimeout(() => {
-            // Clear the signup role from sessionStorage
-            sessionStorage.removeItem('signupRole');
-            window.location.href = "/signin";
-          }, 3000);
+          if (data.success) {
+            showPopup(data.message); // Success message
+            // Store email for verification
+            sessionStorage.setItem('verificationEmail', formData.email);
+            sessionStorage.setItem('verificationName', `${formData.firstName} ${formData.lastName}`);
+            setTimeout(() => {
+              sessionStorage.removeItem('signupRole');
+              window.location.href = "/verification";
+            }, 3000);
+          } else {
+            showPopup(data.message || "Signup failed", true);
+          }
         })
         .catch(error => {
           console.error("Error:", error);
-          showPopup("Signup failed. Please try again.", true); // Error message
+          showPopup("Signup failed. Please try again.", true);
         });
     }
   });
