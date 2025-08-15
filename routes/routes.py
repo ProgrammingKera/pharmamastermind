@@ -24,7 +24,7 @@ def dashboard():
         return render_template("admindashboard.html")
     elif role == "employee":
         return redirect(url_for('routes.point_of_sale'))
-    elif role == "customer":
+    elif role == ["customer", "owner","admin"]:
         return redirect(url_for('routes.customer'))
     return "Unauthorized access", 403
 
@@ -69,7 +69,7 @@ def order():
 
 @routes.route('/customer')
 def customer():
-    if session.get("role") != "customer":
+    if session.get("role") not in ["customer", "owner", "admin"]:
         return "Unauthorized access", 403
     return render_template("customer.html")
 
@@ -117,9 +117,10 @@ def logout():
     session.clear()
     return redirect(url_for('routes.signin'))
 
+
 @routes.route('/payment')
 def payment():
-    if session.get("role") not in [ "admin", "customer"]:
+    if session.get("role") not in [ "admin", "customer","owner"]:
         return "Unauthorized access", 403
     return send_from_directory('payment', 'index.html')
 
@@ -155,3 +156,19 @@ def serve_payment_css(filename):
 @routes.route('/payment/<path:filename>.js')
 def serve_payment_js(filename):
     return send_from_directory('payment', f'{filename}.js')
+@routes.route('/customer-pattern')
+def customer_pattern():
+    return render_template('customerpurchase.html')
+
+@routes.route('/seasonal-demand')
+def seasonal_demand(): 
+    return render_template('forecast.html')
+
+
+@routes.route('/restocking')
+def restocking(): 
+    return render_template('Restock Prediction.html')
+
+@routes.route('/smart-recommendation')
+def smart_recommendation(): 
+    return render_template('SmartRecommendation.html')

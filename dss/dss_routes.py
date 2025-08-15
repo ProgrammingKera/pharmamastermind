@@ -256,8 +256,9 @@ def expiry_alerts():
         conn = mysql.connection
         cursor = conn.cursor()
 
+        # ✅ Include image_path from DB
         cursor.execute("""
-            SELECT product_id, product_name, expiry_date, stock_quantity
+            SELECT product_id, product_name, expiry_date, stock_quantity, image_path
             FROM products
             WHERE expiry_date > %s
             ORDER BY expiry_date ASC
@@ -274,6 +275,18 @@ def expiry_alerts():
             product_name = row['product_name']
             expiry_date = row['expiry_date']
             stock_quantity = row['stock_quantity']
+            image_path = row['image_path']
+
+            # ✅ Clean image URL
+            if image_path:
+                if image_path.lower().startswith('http'):  
+                    image_url = image_path  # Already full URL
+                elif image_path.startswith('/pictures/'):
+                    image_url = image_path  # Already correct path
+                else:
+                    image_url = f"/pictures/{image_path}"  # Only filename
+            else:
+                image_url = None
 
             if isinstance(expiry_date, datetime):
                 expiry_datetime = expiry_date
@@ -317,7 +330,8 @@ def expiry_alerts():
                 'time_to_expiry': time_to_expiry,
                 'demand': demand,
                 'priority_score': round(priority_score, 2),
-                'expiry_alert': expiry_alert
+                'expiry_alert': expiry_alert,
+                'image_url': image_url
             })
 
         result.sort(key=lambda x: x['priority_score'], reverse=True)
@@ -327,8 +341,6 @@ def expiry_alerts():
 
     except Exception as e:
         return jsonify({"error": f"Error: {str(e)}"}), 500
-
-
 
 # Smart Recommendations
 @dss_bp.route('/smart_recommendations', methods=['GET'])
@@ -561,6 +573,7 @@ def seasonal_forecast():
             # ✅ Final Result
             result = {
                 "product_id": product_id,
+                "product_name": product_names[product_id],
                 "year": year,
                 "season_type": season_type,
                 "predicted_demand": f"{prediction} units",

@@ -243,7 +243,7 @@ function saveUser() {
             closeModal();
             fetchUsers();
             showNotification(
-                editMode ? 'User updated successfully!' : 'User added successfully!',
+                editMode ? 'User added successfully!':'User updated successfully!'  ,
                 'success'
             );
         } else {
@@ -272,7 +272,7 @@ function validateUser(userData) {
 
     // Validate password for new users
     if (!editMode && userData.password.length < 6) {
-        showNotification('Password must be at least 6 characters long', 'error');
+        showNotification('Password must be at least 8 characters long', 'error');
         return false;
     }
 

@@ -32,10 +32,12 @@ function getExpiryWarningClass(daysUntilExpiry) {
 // Function to create product card
 function createProductCard(product) {
     const warningClass = getExpiryWarningClass(product.time_to_expiry);
+    const imageUrl = product.image_url || 'https://placehold.co/300x200';
 
     return `
         <div class="product-card">
-            <img src="/pictures/product1.jpg" alt="${product.product_name}" onerror="this.src='https://placehold.co/300x200'">
+            <img src="${imageUrl}" alt="${product.product_name}" 
+                 onerror="this.src='https://placehold.co/300x200'">
             <div class="product-info">
                 <h3>${product.product_name}</h3>
                 <p>Expiry Date: ${new Date(product.expiry_date).toLocaleDateString()}</p>

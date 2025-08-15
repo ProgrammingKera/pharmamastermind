@@ -112,11 +112,13 @@ main {
 }
 
 .login-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 2.5rem;
-    padding: 1rem;
+    display: flex;
+    justify-content: center; /* center align */
+    gap: 2.5rem; /* space between cards */
+    flex-wrap: nowrap; /* ek hi line me rakhe */
+    padding: 0.5rem;
 }
+
 
 .card {
     background: var(--text-light);
@@ -127,6 +129,13 @@ main {
     transition: all 0.4s ease;
     box-shadow: var(--shadow-sm);
     border: 1px solid rgba(0, 0, 0, 0.05);
+
+    /* Add these for equal size */
+    width: 250px;   /* sab cards ka same width */
+    height: 250px;  /* sab cards ka same height */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
 .card:hover {
