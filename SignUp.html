@@ -120,9 +120,10 @@
 <body>
   <div class="container">
     <p>Create your account</p>
-    <h1>Sign up</h1>
+    <h1 id="signupTitle">Sign up</h1>
+    <p id="signupDescription" style="color: #666; margin-bottom: 20px; font-size: 14px;"></p>
     <form id="signupForm" novalidate>
-      <div class="form-group">
+      <div class="form-group" id="roleGroup">
         <select name="role" id="role" required>
           <option value="" disabled selected>Select a Role</option>
           <option value="owner">Owner</option>
@@ -199,6 +200,41 @@
 </style>
 
 <script>
+  // Get selected role from sessionStorage
+  const signupRole = sessionStorage.getItem('signupRole');
+  
+  // Update UI and set role based on selection
+  if (signupRole) {
+    const roleSelect = document.getElementById('role');
+    const roleGroup = document.getElementById('roleGroup');
+    const signupTitle = document.getElementById('signupTitle');
+    const signupDescription = document.getElementById('signupDescription');
+    
+    // Set the role and hide the dropdown
+    roleSelect.value = signupRole;
+    roleGroup.style.display = 'none';
+    
+    // Update title and description
+    switch(signupRole) {
+      case 'owner':
+        signupTitle.textContent = 'Owner Registration';
+        signupDescription.textContent = 'Create your owner account for full system access';
+        break;
+      case 'admin':
+        signupTitle.textContent = 'Admin Registration';
+        signupDescription.textContent = 'Create your admin account for system management';
+        break;
+      case 'employee':
+        signupTitle.textContent = 'Employee Registration';
+        signupDescription.textContent = 'Create your employee account for POS access';
+        break;
+      case 'customer':
+        signupTitle.textContent = 'Customer Registration';
+        signupDescription.textContent = 'Create your customer account to shop online';
+        break;
+    }
+  }
+
   // Function to show popup
   function showPopup(message, isError = false) {
     const popup = document.createElement("div");
@@ -316,6 +352,8 @@
         .then(data => {
           showPopup(data); // Success message
           setTimeout(() => {
+            // Clear the signup role from sessionStorage
+            sessionStorage.removeItem('signupRole');
             window.location.href = "/signin";
           }, 3000);
         })

@@ -16,6 +16,14 @@ def signin():
 def forgot_password():
     return render_template('ForgetPassword.html')
 
+@routes.route('/verification')
+def verification():
+    return render_template('verification.html')
+
+@routes.route('/reset-password')
+def reset_password_page():
+    return render_template('reset-password.html')
+
 # ==================== Dashboards =====================
 @routes.route('/dashboard')
 def dashboard():

@@ -161,7 +161,8 @@
         <div class="form-section">
             <img>
             <h3>Welcome back !!!</h3>
-            <h1>Sign in</h1>
+            <h1 id="roleTitle">Sign in</h1>
+            <p id="roleDescription" style="color: #666; margin-bottom: 20px; font-size: 14px;"></p>
             <form id="login-form">
                 <label for="email">Email</label>
                 <input type="email" id="email" placeholder="Enter Your Email" required />
@@ -208,6 +209,34 @@
 <div id="popup-message"></div>
 
 <script>
+    // Get selected role from sessionStorage
+    const selectedRole = sessionStorage.getItem('selectedRole');
+    
+    // Update UI based on selected role
+    if (selectedRole) {
+        const roleTitle = document.getElementById('roleTitle');
+        const roleDescription = document.getElementById('roleDescription');
+        
+        switch(selectedRole) {
+            case 'owner':
+                roleTitle.textContent = 'Owner Login';
+                roleDescription.textContent = 'Access full system control and business insights';
+                break;
+            case 'admin':
+                roleTitle.textContent = 'Admin Login';
+                roleDescription.textContent = 'Manage inventory, users, and operations';
+                break;
+            case 'employee':
+                roleTitle.textContent = 'Employee Login';
+                roleDescription.textContent = 'Access POS system and inventory management';
+                break;
+            case 'customer':
+                roleTitle.textContent = 'Customer Login';
+                roleDescription.textContent = 'Shop online and manage your orders';
+                break;
+        }
+    }
+
     const emailInput = document.getElementById("email");
     const passwordInput = document.getElementById("password");
     const popup = document.getElementById("popup-message");
@@ -281,6 +310,8 @@
                 if (data.success) {
                     showPopup("Login successful !", "success");
                     setTimeout(() => {
+                        // Clear the selected role from sessionStorage
+                        sessionStorage.removeItem('selectedRole');
                         const role = data.role;
                         if (role === "admin") {
                             window.location.href = "/admininventory";
@@ -308,10 +339,20 @@
 
 
             <p class="signup-text">
-                I don’t have an account? <a href="/signup">Sign up</a>
+                I don't have an account? <a href="#" onclick="goToSignup()">Sign up</a>
             </p>
         </div>
     </div>
+
+<script>
+function goToSignup() {
+    const selectedRole = sessionStorage.getItem('selectedRole');
+    if (selectedRole) {
+        sessionStorage.setItem('signupRole', selectedRole);
+    }
+    window.location.href = '/signup';
+}
+</script>
 </body>
 
 </html>
