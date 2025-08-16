@@ -25,7 +25,7 @@ class EmailService:
         """Send verification email to user"""
         try:
             msg = MIMEMultipart()
-            msg['From'] = self.email
+            msg['From'] = f"Pharmamastermind <{self.email}>"
             msg['To'] = to_email
             msg['Subject'] = "Verify Your PharmaMastermind Account"
             

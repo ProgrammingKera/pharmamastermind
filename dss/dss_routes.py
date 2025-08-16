@@ -258,7 +258,7 @@ def expiry_alerts():
 
         # ✅ Include image_path from DB
         cursor.execute("""
-            SELECT product_id, product_name, expiry_date, stock_quantity, image_path
+            SELECT product_id, product_name, expiry_date, stock_quantity, image_path, cost_price
             FROM products
             WHERE expiry_date > %s
             ORDER BY expiry_date ASC

@@ -101,7 +101,7 @@ async function addExpiryProductsToOrder() {
         // Convert to order format
         const orderProducts = urgentExpiry.map(product => ({
             name: product.product_name,
-            price: 100, // Default price - you can modify this
+            price: product.cost_price, // Default price - you can modify this
             quantity: 10 // Default quantity for expiry products
         }));
         

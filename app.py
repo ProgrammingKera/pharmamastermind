@@ -1392,6 +1392,103 @@ def get_invoice(order_id):
     }), 200
 
 
+# Process Return
+@app.route('/api/process_return', methods=['POST'])
+def process_return():
+    try:
+        data = request.get_json()
+        
+        cur = mysql.connection.cursor()
+        
+        # Insert return record
+        cur.execute("""
+            INSERT INTO returns (invoice_number, product_name, original_quantity, 
+                               return_quantity, unit_price, return_amount, return_reason, 
+                               return_notes, return_date, processed_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+        """, (
+            data['invoice_number'],
+            data['product_name'],
+            data['original_quantity'],
+            data['return_quantity'],
+            data['unit_price'],
+            data['return_amount'],
+            data['return_reason'],
+            data['return_notes'],
+            session.get('user_id', 'system')
+        ))
+        
+        # Update product stock (add returned quantity back)
+        cur.execute("""
+            UPDATE products 
+            SET stock_quantity = stock_quantity + %s 
+            WHERE product_name = %s
+        """, (data['return_quantity'], data['product_name']))
+        
+        mysql.connection.commit()
+        cur.close()
+        
+        return jsonify({"success": True, "message": "Return processed successfully"})
+        
+    except Exception as e:
+        mysql.connection.rollback()
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+# Save Auto Generated Order List
+@app.route('/api/save_auto_order', methods=['POST'])
+def save_auto_order():
+    try:
+        data = request.get_json()
+        predictions = data.get('predictions', [])
+        
+        if not predictions:
+            return jsonify({"success": False, "message": "No predictions provided"}), 400
+        
+        cur = mysql.connection.cursor()
+        
+        # Calculate totals
+        total_items = len(predictions)
+        estimated_cost = sum(pred.get('estimated_cost', 0) for pred in predictions)
+        
+        # Insert auto generated order
+        cur.execute("""
+            INSERT INTO auto_generated_order_list 
+            (generation_date, processed_status, total_items, estimated_cost)
+            VALUES (NOW(), 'pending', %s, %s)
+        """, (total_items, estimated_cost))
+        
+        auto_order_id = cur.lastrowid
+        
+        # Insert auto order items
+        for prediction in predictions:
+            cur.execute("""
+                INSERT INTO auto_order_items 
+                (auto_order_id, product_id, prediction_id, quantity_to_order, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+            """, (
+                auto_order_id,
+                prediction.get('product_id'),
+                prediction.get('prediction_id', auto_order_id),  # Use auto_order_id as fallback
+                prediction.get('recommended_quantity', 0)
+            ))
+        
+        mysql.connection.commit()
+        cur.close()
+        
+        return jsonify({
+            "success": True, 
+            "message": "Auto order saved successfully",
+            "auto_order_id": auto_order_id,
+            "total_items": total_items,
+            "estimated_cost": estimated_cost
+        })
+        
+    except Exception as e:
+        mysql.connection.rollback()
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
 # Get all employees
 
 @app.route('/employees/add', methods=['POST'])

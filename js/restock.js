@@ -27,10 +27,42 @@ async function fetchRestockData() {
         document.getElementById('restockProductsSection').style.display = 'block';
         showLoading(false);
         
+        // Auto-save to database
+        await saveRestockPredictionsToDatabase(restockData);
+        
     } catch (error) {
         console.error('Error fetching restock data:', error);
         showNotification('Error loading restock predictions', 'error');
         showLoading(false);
+    }
+}
+
+async function saveRestockPredictionsToDatabase(predictions) {
+    try {
+        // Prepare data for auto order
+        const orderData = predictions.map(pred => ({
+            product_id: pred.product_id,
+            prediction_id: pred.product_id, // Using product_id as prediction_id
+            recommended_quantity: pred.recommended_quantity,
+            estimated_cost: pred.recommended_quantity * 100 // Assuming average cost of 100 per unit
+        }));
+        
+        const response = await fetch('/api/save_auto_order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ predictions: orderData })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification(`Restock predictions saved! Order ID: ${result.auto_order_id}`, 'success');
+        } else {
+            console.error('Failed to save predictions:', result.message);
+        }
+        
+    } catch (error) {
+        console.error('Error saving predictions to database:', error);
     }
 }
 
@@ -60,7 +92,7 @@ function displayRestockProducts(products) {
         row.innerHTML = `
             <td style="padding: 12px; border: 1px solid #ddd; text-align: center;">
                 <input type="checkbox" class="product-checkbox" value="${product.product_id}" 
-                       onchange="updateSelectedProducts()">
+                       data-product='${JSON.stringify(product)}' onchange="updateSelectedProducts()">
             </td>
             <td style="padding: 12px; border: 1px solid #ddd; font-weight: 600;">${product.product_name}</td>
             <td style="padding: 12px; border: 1px solid #ddd; text-align: center;">
@@ -110,13 +142,12 @@ function toggleSelectAll() {
 function updateSelectedProducts() {
     const checkboxes = document.querySelectorAll('.product-checkbox:checked');
     selectedProducts = Array.from(checkboxes).map(cb => {
-        const productId = parseInt(cb.value);
-        const product = restockData.find(p => p.product_id === productId);
+        const productData = JSON.parse(cb.getAttribute('data-product'));
         return {
-            product_id: productId,
-            name: product.product_name,
+            product_id: productData.product_id,
+            name: productData.product_name,
             price: 100, // Default price - you can modify this
-            quantity: product.recommended_quantity
+            quantity: productData.recommended_quantity
         };
     });
     
