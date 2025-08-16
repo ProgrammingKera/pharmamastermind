@@ -106,7 +106,8 @@ class EmailService:
                     .container {{ max-width: 600px; margin: 0 auto; background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
                     .header {{ background: linear-gradient(135deg, #E74C3C, #F39C12); color: white; padding: 30px; text-align: center; }}
                     .content {{ padding: 30px; }}
-                    .reset-button {{ background: #E74C3C; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; font-weight: bold; }}
+                    .reset-code {{ background: #f8f9fa; border: 2px dashed #E74C3C; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px; }}
+                    .code {{ font-size: 32px; font-weight: bold; color: #E74C3C; letter-spacing: 8px; }}
                     .footer {{ background: #f8f9fa; padding: 20px; text-align: center; color: #666; }}
                     .warning {{ background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 15px 0; }}
                 </style>
@@ -121,20 +122,21 @@ class EmailService:
                         <h2>Hello {user_name}!</h2>
                         <p>We received a request to reset your password for your PharmaMastermind account.</p>
                         
-                        <p>Click the button below to reset your password:</p>
-                        <a href="{reset_link}" class="reset-button">Reset My Password</a>
+                        <p>Use the following code to reset your password:</p>
+                        
+                        <div class="reset-code">
+                            <p>Your Reset Code:</p>
+                            <div class="code">{reset_token}</div>
+                        </div>
                         
                         <div class="warning">
                             <strong>⚠️ Security Notice:</strong>
                             <ul>
-                                <li>This link will expire in 1 hour</li>
+                                <li>This code will expire in 10 minutes</li>
                                 <li>If you didn't request this reset, please ignore this email</li>
-                                <li>Never share this link with anyone</li>
+                                <li>Never share this code with anyone</li>
                             </ul>
                         </div>
-                        
-                        <p>If the button doesn't work, copy and paste this link in your browser:</p>
-                        <p style="word-break: break-all; color: #138BA8;">{reset_link}</p>
                     </div>
                     <div class="footer">
                         <p>© 2024 PharmaMastermind. All rights reserved.</p>

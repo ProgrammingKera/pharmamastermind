@@ -250,7 +250,7 @@ def forgot_password():
         mysql.connection.commit()
 
         # Send reset email
-        if email_service.send_verification_email(email, user[2] + " " + user[3], reset_code):
+        if email_service.send_password_reset_email(email, user[2] + " " + user[3], reset_code):
             cur.close()
             return jsonify({"success": True, "message": "Password reset code sent to email!"}), 200
         else:
