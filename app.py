@@ -1025,6 +1025,43 @@ def create_payment_intent():
         return jsonify({'error': str(e)}), 500
 
 
+# Get expired products
+@app.route('/api/expired_products', methods=['GET'])
+def get_expired_products():
+    try:
+        current_date = datetime.now().date()
+        
+        cur = mysql.connection.cursor()
+        cur.execute("""
+            SELECT product_id, product_name, expiry_date, stock_quantity, price, image_path
+            FROM products
+            WHERE expiry_date < %s
+            ORDER BY expiry_date ASC
+        """, (current_date,))
+        
+        rows = cur.fetchall()
+        columns = [desc[0] for desc in cur.description]
+        expired_products = [dict(zip(columns, row)) for row in rows]
+        
+        # Calculate days expired
+        for product in expired_products:
+            expiry_date = product['expiry_date']
+            if isinstance(expiry_date, datetime):
+                expiry_datetime = expiry_date
+            else:
+                expiry_datetime = datetime.combine(expiry_date, datetime.min.time())
+            
+            days_expired = (datetime.now() - expiry_datetime).days
+            product['days_expired'] = days_expired
+            product['status'] = 'EXPIRED'
+        
+        cur.close()
+        return jsonify(expired_products)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # Save Customer Order with Payment Details
 @app.route('/api/save_customer_order', methods=['POST'])
 def save_customer_order():

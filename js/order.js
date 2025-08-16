@@ -1,5 +1,37 @@
 let cart = [];
 
+// Load products from sessionStorage on page load
+window.onload = function() {
+    fetchProducts();
+    loadStoredProducts();
+};
+
+function loadStoredProducts() {
+    // Load expiry products
+    const expiryProducts = sessionStorage.getItem('expiryProducts');
+    if (expiryProducts) {
+        const products = JSON.parse(expiryProducts);
+        products.forEach(product => {
+            cart.push(product);
+        });
+        sessionStorage.removeItem('expiryProducts');
+        updateCartDisplay();
+        showNotification('Expiry products loaded into cart!', 'success');
+    }
+    
+    // Load restock products
+    const restockProducts = sessionStorage.getItem('restockProducts');
+    if (restockProducts) {
+        const products = JSON.parse(restockProducts);
+        products.forEach(product => {
+            cart.push(product);
+        });
+        sessionStorage.removeItem('restockProducts');
+        updateCartDisplay();
+        showNotification('Restock products loaded into cart!', 'success');
+    }
+}
+
 // Fetch and display products
 async function fetchProducts() {
     try {
@@ -112,5 +144,35 @@ document.getElementById("confirm-order").addEventListener("click", async () => {
 });
 
 
-// Load products on page load
-window.onload = fetchProducts;
+function showNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 15px 25px;
+        background: ${type === 'error' ? '#E74C3C' : type === 'success' ? '#27AE60' : type === 'warning' ? '#F39C12' : '#3498DB'};
+        color: white;
+        border-radius: 8px;
+        z-index: 9999;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        font-weight: 500;
+        animation: slideIn 0.3s ease;
+    `;
+    
+    notification.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-${type === 'error' ? 'exclamation-triangle' : type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle'}"></i>
+            ${message}
+        </div>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => notification.remove(), 300);
+        }
+    }, 3000);
+}

@@ -12,6 +12,14 @@ async function fetchExpiryAlerts() {
         }
 
         products = data;
+        
+        // Separate expired and expiring products
+        const expiredProducts = products.filter(p => p.time_to_expiry < 0);
+        const expiringProducts = products.filter(p => p.time_to_expiry >= 0);
+        
+        // Show expired products first, then expiring products
+        const sortedProducts = [...expiredProducts, ...expiringProducts];
+        
         displayProducts(products);
     } catch (err) {
         console.error('Fetch error:', err);
@@ -20,6 +28,7 @@ async function fetchExpiryAlerts() {
 
 // Function to get expiry warning class
 function getExpiryWarningClass(daysUntilExpiry) {
+    if (daysUntilExpiry < 0) return 'warning-expired';
     if (daysUntilExpiry <= 1) return 'warning-day';
     if (daysUntilExpiry <= 7) return 'warning-week';
     if (daysUntilExpiry <= 30) return 'warning-month';
@@ -34,6 +43,11 @@ function createProductCard(product) {
     const warningClass = getExpiryWarningClass(product.time_to_expiry);
     const imageUrl = product.image_url || 'https://placehold.co/300x200';
 
+    // Determine expiry status text
+    const expiryText = product.time_to_expiry < 0 
+        ? `EXPIRED ${Math.abs(product.time_to_expiry)} days ago`
+        : `Expires in ${product.time_to_expiry} days`;
+
     return `
         <div class="product-card">
             <img src="${imageUrl}" alt="${product.product_name}" 
@@ -43,7 +57,7 @@ function createProductCard(product) {
                 <p>Expiry Date: ${new Date(product.expiry_date).toLocaleDateString()}</p>
                 <p>Demand: ${product.demand}</p>
                 <div class="expiry-warning ${warningClass}">
-                    ${product.expiry_alert} — Expires in ${product.time_to_expiry} days
+                    ${product.expiry_alert} — ${expiryText}
                 </div>
             </div>
         </div>
@@ -74,6 +88,8 @@ function filterProducts() {
                 return daysUntilExpiry <= 7 && matchesSearch;
             case 'month':
                 return daysUntilExpiry <= 30 && matchesSearch;
+            case 'expired':
+                return daysUntilExpiry < 0 && matchesSearch;
             default:
                 return matchesSearch;
         }
