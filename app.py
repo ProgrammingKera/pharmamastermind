@@ -61,9 +61,13 @@ def signsup():
 
     
 
-    # Generate verification code
-    verification_code = email_service.generate_verification_code()
-    code_expiry = datetime.now() + timedelta(minutes=10)
+    # For customers: send email verification. For admin/employee: no email, only owner approval.
+    if role == 'customer':
+        verification_code = email_service.generate_verification_code()
+        code_expiry = datetime.now() + timedelta(minutes=10)
+    else:
+        verification_code = None
+        code_expiry = None
     
     hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
@@ -76,7 +80,7 @@ def signsup():
             cur.close()
             return jsonify({"success": False, "message": "Email already exists"}), 400
         
-        # Store user data temporarily with verification code
+        # Store user data temporarily; verification fields only used for customers
         cur.execute("""
             INSERT INTO pending_users (username, first_name, last_name, email, password, role, verification_code, code_expiry)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -88,16 +92,25 @@ def signsup():
         mysql.connection.commit()
         cur.close()
         
-        # Send verification email
-        if email_service.send_verification_email(email, f"{first_name} {last_name}", verification_code):
-            print("✅ Verification email sent successfully.")
+        # Branch by role
+        if role == 'customer':
+            # Send verification email for customer only
+            if email_service.send_verification_email(email, f"{first_name} {last_name}", verification_code):
+                print("✅ Verification email sent successfully.")
+                return jsonify({
+                    "success": True, 
+                    "message": "Verification email sent! Please check your email to complete registration.",
+                    "email": email
+                }), 200
+            else:
+                return jsonify({"success": False, "message": "Failed to send verification email"}), 500
+        else:
+            # Admin/Employee: no email, just wait for owner approval
             return jsonify({
-                "success": True, 
-                "message": "Verification email sent! Please check your email to complete registration.",
+                "success": True,
+                "message": "Registration submitted! Waiting for owner approval.",
                 "email": email
             }), 200
-        else:
-            return jsonify({"success": False, "message": "Failed to send verification email"}), 500
             
     except Exception as e:
         print("❌ Signup Error:", str(e))
@@ -111,27 +124,46 @@ def verify_email():
     code = data.get("code")
     
     try:
-        cur = mysql.connection.cursor()
+        cur = mysql.connection.cursor(DictCursor)
         
-        # Check verification code
-        cur.execute("""
-            SELECT * FROM pending_users 
-            WHERE email = %s AND verification_code = %s AND code_expiry > NOW()
-        """, (email, code))
+        # Check verification code for customers only; tolerate NULL expiry
+        cur.execute(
+            """
+            SELECT id, username, first_name, last_name, email, password, role
+            FROM pending_users 
+            WHERE email = %s 
+              AND verification_code = %s 
+              AND role = 'customer'
+              AND (code_expiry IS NULL OR code_expiry > NOW())
+            """,
+            (email, code)
+        )
         
         pending_user = cur.fetchone()
         
         if pending_user:
             # Move user to main users table
-            cur.execute("""
+            cur2 = mysql.connection.cursor()
+            cur2.execute(
+                """
                 INSERT INTO users (username, first_name, last_name, email, password, role)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            """, (pending_user[1], pending_user[2], pending_user[3], pending_user[4], pending_user[5], pending_user[6]))
+                """,
+                (
+                    pending_user['username'],
+                    pending_user['first_name'],
+                    pending_user['last_name'],
+                    pending_user['email'],
+                    pending_user['password'],
+                    pending_user['role']
+                )
+            )
             
             # Remove from pending users
-            cur.execute("DELETE FROM pending_users WHERE email = %s", (email,))
+            cur2.execute("DELETE FROM pending_users WHERE id = %s", (pending_user['id'],))
             
             mysql.connection.commit()
+            cur2.close()
             cur.close()
             
             return jsonify({"success": True, "message": "Email verified successfully!"})
@@ -143,6 +175,194 @@ def verify_email():
         print("❌ Verification Error:", str(e))
         return jsonify({"success": False, "message": str(e)}), 500
 
+
+# ==================== Owner Approvals APIs =====================
+@app.route('/api/pending-approvals', methods=['GET'])
+def get_pending_approvals():
+    try:
+        # Only owner can fetch pending approvals
+        if session.get('role') != 'owner':
+            return jsonify({"error": "Unauthorized"}), 403
+
+        cur = mysql.connection.cursor()
+        # Pending requests for roles that require owner approval
+        cur.execute(
+            """
+            SELECT id, username, first_name, last_name, email, role, code_expiry
+            FROM pending_users
+            WHERE role IN ('admin')
+            ORDER BY id DESC
+            """
+        )
+        rows = cur.fetchall()
+        cur.close()
+
+        approvals = []
+        for row in rows:
+            # row indices based on existing usage in verify-email route
+            pending_id = row[0]
+            username = row[1]
+            first_name = row[2]
+            last_name = row[3]
+            email = row[4]
+            role = row[5]
+            code_expiry = row[6]
+
+            # Approximate created_at as 10 minutes before code_expiry (how it was generated at signup)
+            try:
+                created_at = (code_expiry - timedelta(minutes=10)) if code_expiry else datetime.now()
+            except Exception:
+                created_at = datetime.now()
+
+            approvals.append({
+                'id': pending_id,
+                'username': username,
+                'first_name': first_name,
+                'last_name': last_name,
+                'email': email,
+                'role': role,
+                'created_at': created_at
+            })
+
+        return jsonify(approvals)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/handle-approval', methods=['POST'])
+def handle_approval():
+    try:
+        # Only owner can approve/reject
+        if session.get('role') != 'owner':
+            return jsonify({"success": False, "message": "Unauthorized"}), 403
+
+        data = request.get_json() or {}
+        approval_id = data.get('approval_id')
+        action = (data.get('action') or '').strip().lower()
+
+        if not approval_id or action not in ('approve', 'reject'):
+            return jsonify({"success": False, "message": "Invalid request"}), 400
+
+        cur = mysql.connection.cursor()
+
+        # Fetch the pending user
+        cur.execute("SELECT * FROM pending_users WHERE id = %s", (approval_id,))
+        pending_user = cur.fetchone()
+        if not pending_user:
+            cur.close()
+            return jsonify({"success": False, "message": "Pending request not found"}), 404
+
+        # Column order inferred from existing verify-email endpoint
+        # 0:id, 1:username, 2:first_name, 3:last_name, 4:email, 5:password, 6:role
+        if action == 'approve':
+            # Owner should only approve admin role requests
+            if pending_user[6] != 'admin':
+                cur.close()
+                return jsonify({"success": False, "message": "Only admin approvals are handled by owner"}), 400
+            # Insert into users
+            cur.execute(
+                """
+                INSERT INTO users (username, first_name, last_name, email, password, role)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (pending_user[1], pending_user[2], pending_user[3], pending_user[4], pending_user[5], pending_user[6])
+            )
+
+        # In both approve and reject, remove from pending_users
+        cur.execute("DELETE FROM pending_users WHERE id = %s", (approval_id,))
+
+        mysql.connection.commit()
+        cur.close()
+
+        return jsonify({"success": True})
+    except Exception as e:
+        mysql.connection.rollback()
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+# ==================== Admin Approvals APIs (Employee approvals) =====================
+@app.route('/api/admin/pending-approvals', methods=['GET'])
+def admin_get_pending_approvals():
+    try:
+        if session.get('role') != 'admin':
+            return jsonify({"error": "Unauthorized"}), 403
+
+        cur = mysql.connection.cursor()
+        cur.execute(
+            """
+            SELECT id, username, first_name, last_name, email, role, code_expiry
+            FROM pending_users
+            WHERE role = 'employee'
+            ORDER BY id DESC
+            """
+        )
+        rows = cur.fetchall()
+        cur.close()
+
+        approvals = []
+        for row in rows:
+            code_expiry = row[6]
+            try:
+                created_at = (code_expiry - timedelta(minutes=10)) if code_expiry else datetime.now()
+            except Exception:
+                created_at = datetime.now()
+            approvals.append({
+                'id': row[0],
+                'username': row[1],
+                'first_name': row[2],
+                'last_name': row[3],
+                'email': row[4],
+                'role': row[5],
+                'created_at': created_at
+            })
+
+        return jsonify(approvals)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/admin/handle-approval', methods=['POST'])
+def admin_handle_approval():
+    try:
+        if session.get('role') != 'admin':
+            return jsonify({"success": False, "message": "Unauthorized"}), 403
+
+        data = request.get_json() or {}
+        approval_id = data.get('approval_id')
+        action = (data.get('action') or '').strip().lower()
+
+        if not approval_id or action not in ('approve', 'reject'):
+            return jsonify({"success": False, "message": "Invalid request"}), 400
+
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT * FROM pending_users WHERE id = %s", (approval_id,))
+        pending_user = cur.fetchone()
+        if not pending_user:
+            cur.close()
+            return jsonify({"success": False, "message": "Pending request not found"}), 404
+
+        # Ensure this endpoint only handles employee requests
+        if pending_user[6] != 'employee':
+            cur.close()
+            return jsonify({"success": False, "message": "Only employee approvals are handled by admin"}), 400
+
+        if action == 'approve':
+            cur.execute(
+                """
+                INSERT INTO users (username, first_name, last_name, email, password, role)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (pending_user[1], pending_user[2], pending_user[3], pending_user[4], pending_user[5], pending_user[6])
+            )
+
+        cur.execute("DELETE FROM pending_users WHERE id = %s", (approval_id,))
+        mysql.connection.commit()
+        cur.close()
+
+        return jsonify({"success": True})
+    except Exception as e:
+        mysql.connection.rollback()
+        return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route("/resend-verification", methods=["POST"])
 def resend_verification():

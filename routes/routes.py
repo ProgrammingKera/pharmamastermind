@@ -187,3 +187,18 @@ def owner_approvals():
     if role != "owner":
         return "Unauthorized access", 403
     return render_template('owner-approvals.html')
+
+
+@routes.route('/admin-approvals')
+def admin_approvals():
+    role = session.get("role")
+    if role != "admin":
+        return "Unauthorized access", 403
+    return render_template('admin-approvals.html')
+
+@routes.route('/profit-margin')
+def profit_margin():
+    role = session.get("role")
+    if role not in ["owner", "admin"]:
+        return "Unauthorized access", 403
+    return render_template('admindashboard.html')
