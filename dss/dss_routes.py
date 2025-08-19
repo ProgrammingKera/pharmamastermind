@@ -1,5 +1,5 @@
 from turtle import pd
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, send_from_directory
 from flask_mysqldb import MySQL
 from datetime import datetime, timedelta
 from sklearn.linear_model import LinearRegression
@@ -13,6 +13,8 @@ import pyDecision
 import random
 from sklearn.cluster import KMeans
 import ahpy
+from fpdf import FPDF
+import os
 
 
 from fahp_custom import fahp
@@ -341,6 +343,319 @@ def expiry_alerts():
 
     except Exception as e:
         return jsonify({"error": f"Error: {str(e)}"}), 500
+
+
+# ============== REPORT GENERATION HELPERS & ENDPOINTS ==============
+def _generate_pdf_report(title: str, columns: list, rows: list, col_widths: list | None = None) -> str:
+    os.makedirs('reports', exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"{title.replace(' ', '_').lower()}_{timestamp}.pdf"
+    path = os.path.join('reports', filename)
+
+    class ReportPDF(FPDF):
+        def header(self):
+            # Skip header on the very first page (we will render custom title + header)
+            if getattr(self, 'skip_first_header', False):
+                # Reset the flag so next pages will render header
+                self.skip_first_header = False
+                return
+            # Render table header on subsequent pages
+            self.set_font("Arial", "B", 10)
+            self.set_fill_color(240, 248, 255)
+            self.set_x(self.l_margin)
+            for i, col in enumerate(self.columns):
+                width = self.col_widths[i]
+                self.cell(width, 8, str(col)[:40], border=1, align='C', fill=True)
+            self.ln(8)
+
+    pdf = ReportPDF(orientation='L', unit='mm', format='A4')
+    pdf.skip_first_header = True
+    # Determine effective width for dynamic column sizing
+    pdf.set_auto_page_break(auto=True, margin=15)
+    effective_width = pdf.w - pdf.l_margin - pdf.r_margin
+    if not col_widths:
+        col_widths = [max(25, int(effective_width / max(1, len(columns)))) for _ in columns]
+    pdf.columns = columns
+    pdf.col_widths = col_widths
+    pdf.add_page()
+
+    # Header
+    pdf.set_font("Arial", "B", 16)
+    pdf.set_text_color(19, 139, 168)
+    pdf.cell(0, 10, f"{title}", ln=True, align="C")
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(0, 8, datetime.now().strftime("Generated on %d %b %Y %H:%M"), ln=True, align="C")
+    pdf.ln(4)
+
+    # Table Header (first page)
+    pdf.set_font("Arial", "B", 10)
+    pdf.set_fill_color(240, 248, 255)
+    pdf.set_x(pdf.l_margin)
+    for i, col in enumerate(columns):
+        pdf.cell(col_widths[i], 8, str(col)[:40], border=1, align='C', fill=True)
+    pdf.ln(8)
+
+    # Table Rows with robust wrapping and page-break handling
+    pdf.set_font("Arial", "", 9)
+    line_height = 6
+
+    def nb_lines_for_text(w: float, txt: str) -> int:
+        if not txt:
+            return 1
+        txt = str(txt).replace('\r', '')
+        parts = txt.split('\n')
+        total_lines = 0
+        space_w = pdf.get_string_width(' ')
+        for part in parts:
+            if part == '':
+                total_lines += 1
+                continue
+            words = part.split(' ')
+            line_w = 0.0
+            lines = 1
+            for idx, word in enumerate(words):
+                ww = pdf.get_string_width(word)
+                add_w = ww if idx == 0 else ww + space_w
+                if line_w + add_w <= w:
+                    line_w += add_w
+                else:
+                    lines += 1
+                    line_w = ww  # start new line with current word
+            total_lines += max(1, lines)
+        return total_lines
+
+    for row in rows:
+        # Compute row height by max number of lines across cells
+        max_lines = 1
+        for i, col in enumerate(row):
+            lines = nb_lines_for_text(col_widths[i], '' if col is None else str(col))
+            if lines > max_lines:
+                max_lines = lines
+        row_height = line_height * max_lines
+
+        # Page break if row won't fit
+        if pdf.get_y() + row_height > pdf.page_break_trigger:
+            pdf.add_page()
+        pdf.set_x(pdf.l_margin)
+        y_top = pdf.get_y()
+
+        # Draw each cell: bordered rectangle for full row height + wrapped text inside
+        for i, col in enumerate(row):
+            x_left = pdf.get_x()
+            w = col_widths[i]
+            # Border rect for consistent row height
+            pdf.rect(x_left, y_top, w, row_height)
+            # Print text with wrapping
+            text = '' if col is None else str(col)
+            pdf.multi_cell(w, line_height, text, border=0)
+            # Move to right cell
+            pdf.set_xy(x_left + w, y_top)
+
+        # Move to next row
+        pdf.set_xy(pdf.l_margin, y_top + row_height)
+
+    pdf.output(path)
+    return path
+
+
+@dss_bp.route('/dss/download_report/<filename>', methods=['GET'])
+def download_report(filename):
+    try:
+        return send_from_directory('reports', filename, as_attachment=True)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 404
+
+
+@dss_bp.route('/dss/report/expiry', methods=['GET'])
+def report_expiry():
+    try:
+        conn = mysql.connection
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT product_id, product_name, expiry_date, stock_quantity
+            FROM products
+            WHERE expiry_date IS NOT NULL
+            ORDER BY expiry_date ASC
+            """
+        )
+        rows = cursor.fetchall()
+        pdf_path = _generate_pdf_report(
+            title='Expiry Report',
+            columns=['Product ID', 'Product Name', 'Expiry Date', 'Stock'],
+            rows=rows
+        )
+        cursor.close()
+        return jsonify({"pdf_url": f"/dss/download_report/{os.path.basename(pdf_path)}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@dss_bp.route('/dss/report/restock', methods=['GET'])
+def report_restock():
+    try:
+        conn = mysql.connection
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT product_id, current_stock, predicted_restock_date, recommended_quantity
+            FROM restock_prediction
+            ORDER BY predicted_restock_date ASC
+            """
+        )
+        rows = cursor.fetchall()
+        pdf_path = _generate_pdf_report(
+            title='Restock Prediction Report',
+            columns=['Product ID', 'Current Stock', 'Predicted Restock Date', 'Recommended Qty'],
+            rows=rows
+        )
+        cursor.close()
+        return jsonify({"pdf_url": f"/dss/download_report/{os.path.basename(pdf_path)}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@dss_bp.route('/dss/report/seasonal', methods=['GET'])
+def report_seasonal():
+    try:
+        conn = mysql.connection
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT product_id, year, season_type, predicted_demand, forecast_accuracy, peak_season_date
+            FROM seasonal_forecasts
+            ORDER BY year DESC, peak_season_date DESC
+            """
+        )
+        rows = cursor.fetchall()
+        pdf_path = _generate_pdf_report(
+            title='Seasonal Forecast Report',
+            columns=['Product ID', 'Year', 'Season Type', 'Predicted Demand', 'Forecast Accuracy', 'Peak Season'],
+            rows=rows
+        )
+        cursor.close()
+        return jsonify({"pdf_url": f"/dss/download_report/{os.path.basename(pdf_path)}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@dss_bp.route('/dss/report/customer-patterns', methods=['GET'])
+def report_customer_patterns():
+    try:
+        conn = mysql.connection
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT customer_id, product_name, product_sales, gross_margin, purchase_frequency, next_predicted_purchase_date
+            FROM customer_purchase_patterns
+            ORDER BY next_predicted_purchase_date DESC
+            """
+        )
+        rows = cursor.fetchall()
+        pdf_path = _generate_pdf_report(
+            title='Customer Purchase Patterns Report',
+            columns=['Customer ID', 'Products', 'Product Sales (PKR)', 'Gross Margin %', 'Frequency', 'Next Purchase'],
+            rows=rows,
+            col_widths=[25, 120, 35, 30, 25, 35]
+        )
+        cursor.close()
+        return jsonify({"pdf_url": f"/dss/download_report/{os.path.basename(pdf_path)}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@dss_bp.route('/dss/report/smart-recommendations', methods=['GET'])
+def report_smart_recommendations():
+    try:
+        conn = mysql.connection
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT p.product_id, p.product_name,
+                   COALESCE(SUM(oi.quantity), 0) AS total_sales,
+                   COALESCE(SUM(oi.unit_price * oi.quantity), 0) AS revenue
+            FROM products p
+            LEFT JOIN order_items oi ON p.product_id = oi.product_id
+            LEFT JOIN orders o ON oi.order_id = o.order_id
+            WHERE o.order_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR o.order_date IS NULL
+            GROUP BY p.product_id, p.product_name
+            ORDER BY revenue DESC
+            LIMIT 100
+            """
+        )
+        rows = cursor.fetchall()
+        pdf_path = _generate_pdf_report(
+            title='Smart Recommendations Report',
+            columns=['Product ID', 'Product Name', 'Total Sales (Units)', 'Revenue (PKR)'],
+            rows=rows
+        )
+        cursor.close()
+        return jsonify({"pdf_url": f"/dss/download_report/{os.path.basename(pdf_path)}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@dss_bp.route('/dss/report/profit-margin-unitwise', methods=['GET'])
+def report_profit_margin_unitwise():
+    try:
+        conn = mysql.connection
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT p.product_id,
+                   p.product_name,
+                   COALESCE(p.dosage_form, 'Unit') AS unit_type,
+                   COALESCE(p.cost_price, 0) AS unit_cost,
+                   COALESCE(AVG(oi.unit_price), p.price, 0) AS unit_price,
+                   COALESCE(SUM(oi.quantity), 0) AS qty_sold
+            FROM products p
+            LEFT JOIN order_items oi ON oi.product_id = p.product_id
+            GROUP BY p.product_id, p.product_name, unit_type, unit_cost, p.price
+            ORDER BY p.product_name ASC
+            """
+        )
+        raw_rows = cursor.fetchall()
+        cursor.close()
+
+        # Build formatted rows with calculations
+        rows = []
+        for (product_id, product_name, unit_type, unit_cost, unit_price, qty_sold) in raw_rows:
+            try:
+                unit_cost_f = float(unit_cost or 0)
+                unit_price_f = float(unit_price or 0)
+                qty_sold_i = int(qty_sold or 0)
+            except Exception:
+                unit_cost_f = 0.0
+                unit_price_f = 0.0
+                qty_sold_i = 0
+
+            unit_profit = max(0.0, unit_price_f - unit_cost_f) if unit_price_f >= 0 and unit_cost_f >= 0 else (unit_price_f - unit_cost_f)
+            total_profit = unit_profit * qty_sold_i
+            margin_pct = ((unit_price_f - unit_cost_f) / unit_price_f * 100.0) if unit_price_f > 0 else 0.0
+
+            rows.append([
+                product_id,
+                product_name,
+                unit_type,
+                f"{unit_cost_f:.2f}",
+                f"{unit_price_f:.2f}",
+                f"{unit_profit:.2f}",
+                qty_sold_i,
+                f"{total_profit:.2f}",
+                f"{margin_pct:.2f}%"
+            ])
+
+        pdf_path = _generate_pdf_report(
+            title='Unit-wise Profit Margin Report',
+            columns=['Product ID', 'Product Name', 'Unit Type', 'Unit Cost', 'Unit Price', 'Unit Profit', 'Units Sold', 'Total Profit', 'Margin %'],
+            rows=rows,
+            col_widths=[20, 90, 25, 25, 25, 25, 25, 30, 25]
+        )
+
+        return jsonify({"pdf_url": f"/dss/download_report/{os.path.basename(pdf_path)}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # Smart Recommendations
 @dss_bp.route('/smart_recommendations', methods=['GET'])
